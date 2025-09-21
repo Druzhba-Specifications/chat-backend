@@ -4,6 +4,16 @@ const cors = require('cors');
 const dns = require('dns');
 const app = express();
 const PORT = process.env.PORT || 3000;
+const express = require('express');
+const fs      = require('fs');
+const path    = require('path');
+const cors    = require('cors');
+const dns     = require('dns');
+const app     = express();
+const PORT    = process.env.PORT || 3000;
+
+// serve your HTML/CSS/JS
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(cors());
 app.use(express.json());
