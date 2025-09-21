@@ -41,3 +41,8 @@ app.post('/send', (req, res) => {
 });
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+app.get('/', (req, res) => {
+  res.send('Welcome to the chat backend!');
+});
+
