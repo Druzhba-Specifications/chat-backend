@@ -7,16 +7,12 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
-// Utility functions
 const read = file => JSON.parse(fs.readFileSync(file));
 const write = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
+const sanitize = str => decodeURIComponent(str).trim();
 
-// Root route
-app.get('/', (req, res) => {
-  res.send('✅ Chat backend is running!');
-});
+app.get('/', (req, res) => res.send('✅ Chat backend is running!'));
 
-// Login
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
@@ -38,7 +34,6 @@ app.post('/login', (req, res) => {
   res.send({ success: true, isAdmin: admins.includes(username) });
 });
 
-// Logoff
 app.post('/logoff', (req, res) => {
   const { username } = req.body;
   const log = read('log.json');
@@ -47,10 +42,8 @@ app.post('/logoff', (req, res) => {
   res.send('Logged off');
 });
 
-// Chat log
 app.get('/log', (req, res) => res.json(read('log.json')));
 
-// Send message
 app.post('/send', (req, res) => {
   const { user, message } = req.body;
   const blacklist = read('blacklist.json');
@@ -66,41 +59,37 @@ app.post('/send', (req, res) => {
   res.send('Message saved');
 });
 
-// Ban user
 app.post('/ban', (req, res) => {
-  const { user } = req.body;
+  const user = sanitize(req.body.user);
   const list = read('blacklist.json');
   if (!list.includes(user)) {
     list.push(user);
     write('blacklist.json', list);
   }
-  res.send('Banned');
+  res.send({ success: true });
 });
 
-// Unban user
 app.post('/unban', (req, res) => {
-  const { user } = req.body;
+  const user = sanitize(req.body.user);
   const list = read('blacklist.json').filter(u => u !== user);
   write('blacklist.json', list);
-  res.send('Unbanned');
+  res.send({ success: true });
 });
 
-// Warn user
 app.post('/warn', (req, res) => {
   const { user, reason, message } = req.body;
   const warns = read('warns.json');
-  warns[user] = { reason, message };
+  warns[sanitize(user)] = { reason, message };
   write('warns.json', warns);
-  res.send('Warned');
+  res.send({ success: true });
 });
 
-// Get warning for user
 app.get('/warn/:user', (req, res) => {
+  const user = sanitize(req.params.user);
   const warns = read('warns.json');
-  res.json(warns[req.params.user] || { reason: '', message: '' });
+  res.json(warns[user] || { reason: '', message: '' });
 });
 
-// Delete line
 app.post('/del', (req, res) => {
   const { line } = req.body;
   const log = read('log.json');
@@ -113,13 +102,11 @@ app.post('/del', (req, res) => {
   }
 });
 
-// Clear chat
 app.post('/clear', (req, res) => {
   write('log.json', []);
   res.send('Cleared');
 });
 
-// Pause chat
 app.post('/pause', (req, res) => {
   const status = read('status.json');
   status.paused = true;
@@ -127,7 +114,6 @@ app.post('/pause', (req, res) => {
   res.send('Paused');
 });
 
-// Unpause chat
 app.post('/unpause', (req, res) => {
   const status = read('status.json');
   status.paused = false;
@@ -135,7 +121,6 @@ app.post('/unpause', (req, res) => {
   res.send('Unpaused');
 });
 
-// Turn chat off
 app.post('/off', (req, res) => {
   const status = read('status.json');
   status.off = true;
@@ -143,7 +128,6 @@ app.post('/off', (req, res) => {
   res.send('Turned off');
 });
 
-// Turn chat on
 app.post('/on', (req, res) => {
   const status = read('status.json');
   status.off = false;
@@ -151,7 +135,6 @@ app.post('/on', (req, res) => {
   res.send('Turned on');
 });
 
-// Get chat status
 app.get('/status', (req, res) => res.json(read('status.json')));
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
