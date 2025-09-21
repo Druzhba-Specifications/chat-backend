@@ -8,42 +8,58 @@ const dns     = require('dns');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// Serve uploaded avatars under /assets
-app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
+// Static assets (avatars & sounds)
+app.use('/assets', express.static(path.join(__dirname, 'assets')));
 
 app.use(cors());
 app.use(express.json());
 
-// Track who’s currently online
+// Track online users
 const onlineUsers = new Set();
 
-// Helpers to read/write JSON files
-function read(file) {
-  return JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
-}
-function write(file, data) {
-  fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
+// JSON helpers
+function read(f)  { return JSON.parse(fs.readFileSync(path.join(__dirname, f), 'utf8')); }
+function write(f, data) {
+  fs.writeFileSync(path.join(__dirname, f), JSON.stringify(data, null, 2));
 }
 
-// Traffic counter (requests per minute)
+// Traffic counter
 let trafficCount = 0;
 setInterval(() => { trafficCount = 0; }, 60_000);
 app.use((req, res, next) => { trafficCount++; next(); });
 
 
-// ─── USERS ENDPOINT ────────────────────────────────────────────────────────────
-// Returns [{ username, profilePic, online, banned }, …]
-app.get('/users', (req, res) => {
-  const accounts  = read('accounts.json');    // may be string or object
-  const blacklist = read('blacklist.json');   // [username, …]
+// ─── PRIVATE MESSAGES ───────────────────────────────────────────────────────────
+// GET all PMs between user1 and user2
+app.get('/pm/:user1/:user2', (req, res) => {
+  const pmLog = read('privates.json');  // [ { from, to, message, ts } … ]
+  const { user1, user2 } = req.params;
+  const convo = pmLog.filter(m =>
+    (m.from === user1 && m.to === user2) ||
+    (m.from === user2 && m.to === user1)
+  );
+  res.json(convo);
+});
 
+// POST a new private message
+app.post('/pm', (req, res) => {
+  const { from, to, message } = req.body;
+  const pmLog = read('privates.json');
+  pmLog.push({ from, to, message, ts: Date.now() });
+  write('privates.json', pmLog);
+  res.send('OK');
+});
+
+
+// ─── USERS (for sidebar) ────────────────────────────────────────────────────────
+app.get('/users', (req, res) => {
+  const accounts  = read('accounts.json');
+  const blacklist = read('blacklist.json');
   const users = Object.keys(accounts).map(username => {
     const info = accounts[username];
-    // if info is an object with profilePic, use it; otherwise default
     const profilePic = (typeof info === 'object' && info.profilePic)
       ? info.profilePic
       : 'placeholder.png';
-
     return {
       username,
       profilePic,
@@ -51,12 +67,11 @@ app.get('/users', (req, res) => {
       banned: blacklist.includes(username)
     };
   });
-
   res.json(users);
 });
 
 
-// ─── PUBLIC CHAT & STATS ENDPOINTS ────────────────────────────────────────────
+// ─── PUBLIC CHAT & STATS ────────────────────────────────────────────────────────
 app.get('/status',        (req, res) => res.json(read('status.json')));
 app.get('/log',           (req, res) => res.json(read('log.json')));
 app.get('/ranks.json',    (req, res) => res.json(read('ranks.json')));
@@ -65,76 +80,70 @@ app.get('/warn/:user',    (req, res) => {
   const warns = read('warns.json');
   res.send(warns[req.params.user] || '');
 });
-
-app.get('/stats/messages', (req, res) => {
-  const log    = read('log.json');
+app.get('/stats/messages', (req,res) => {
+  const log = read('log.json');
   const counts = {};
-  for (let i = 9; i >= 0; i--) {
+  for(let i=9;i>=0;i--){
     const d = new Date();
-    d.setDate(d.getDate() - i);
+    d.setDate(d.getDate()-i);
     counts[d.toISOString().slice(0,10)] = 0;
   }
-  log.forEach(line => {
-    if (!line.startsWith('<<') && line.includes('>>')) {
+  log.forEach(l => {
+    if(!l.startsWith('<<') && l.includes('>>')) {
       const day = new Date().toISOString().slice(0,10);
-      if (counts[day] !== undefined) counts[day]++;
+      if(counts[day]!==undefined) counts[day]++;
     }
   });
   res.json(counts);
 });
-
-app.get('/stats/recent', (req, res) => {
+app.get('/stats/recent',  (req,res) => {
   const log = read('log.json');
-  const last = [...log].reverse().find(l => l.includes('>>'));
-  res.send(last || '');
+  const last = [...log].reverse().find(l=>l.includes('>>'));
+  res.send(last||'');
 });
-
-app.get('/stats/ping', (req, res) => {
+app.get('/stats/ping',    (req,res) => {
   const start = Date.now();
-  dns.lookup('google.com', err => {
-    res.json({ ping: err ? -1 : Date.now() - start });
+  dns.lookup('google.com', err=>{
+    res.json({ ping: err?-1:Date.now()-start });
   });
 });
-
-app.get('/stats/traffic', (req, res) => {
+app.get('/stats/traffic', (req,res) => {
   res.json({ requestsPerMinute: trafficCount });
 });
 
 
-// ─── AUTH & MESSAGING ──────────────────────────────────────────────────────────
+// ─── AUTH & CHAT ───────────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
   const admins   = read('admins.json');
   const status   = read('status.json');
 
-  if (status.off && username !== 'GOD HIMSELF') {
-    return res.send({ redirect: 'off.html' });
+  if(status.off && username!=='GOD HIMSELF') {
+    return res.send({ redirect:'off.html' });
   }
-  const userInfo = accounts[username];
-  const storedHash = typeof userInfo === 'object' ? userInfo.password : userInfo;
-  if (!storedHash || storedHash !== password) {
-    return res.send({ success: false });
+  const info = accounts[username];
+  const pass = typeof info==='object' ? info.password : info;
+  if(!pass || pass!==password) {
+    return res.send({ success:false });
   }
 
-  // mark online
   onlineUsers.add(username);
 
-  // log login
+  // log user in
   const lastlogin = read('lastlogin.json');
   const logArr    = read('log.json');
-  logArr.push(`<<${username} Logged on! Last login: ${lastlogin[username] || 'Never'}>>`);
+  logArr.push(`<<${username} Logged on!>>`);
   lastlogin[username] = new Date().toLocaleString();
   write('lastlogin.json', lastlogin);
   write('log.json', logArr);
 
-  res.send({ success: true, isAdmin: admins.includes(username) });
+  res.send({ success:true, isAdmin: admins.includes(username) });
 });
 
 app.post('/logoff', (req, res) => {
   const { username } = req.body;
   onlineUsers.delete(username);
-
   const logArr = read('log.json');
   logArr.push(`<<${username} Logged off>>`);
   write('log.json', logArr);
@@ -145,10 +154,8 @@ app.post('/send', (req, res) => {
   const { user, message } = req.body;
   const status    = read('status.json');
   const blacklist = read('blacklist.json');
-
-  if (status.paused && user !== 'GOD HIMSELF') return res.send('Chat is paused');
-  if (blacklist.includes(user))               return res.send('You are banned');
-
+  if(status.paused && user!=='GOD HIMSELF') return res.send('paused');
+  if(blacklist.includes(user))               return res.send('banned');
   const logArr = read('log.json');
   logArr.push(`${user}>>${message}`);
   write('log.json', logArr);
@@ -156,76 +163,16 @@ app.post('/send', (req, res) => {
 });
 
 
-// ─── ADMIN COMMANDS ────────────────────────────────────────────────────────────
-app.post('/clear', (req, res) => {
-  write('log.json', ['<<SYSTEM>> Chat cleared by admin>>']);
-  res.send('OK');
-});
+// ─── ADMIN ACTIONS ─────────────────────────────────────────────────────────────
+app.post('/clear',   (req,res) =>{ write('log.json',['<<SYSTEM>> Cleared>>']); res.send('OK'); });
+app.post('/ban',     (req,res) =>{ const t=req.body.user; if(t!=='GOD HIMSELF'){const b=read('blacklist.json'); if(!b.includes(t)) write('blacklist.json',[...b,t]);} res.send('OK'); });
+app.post('/unban',   (req,res) =>{ write('blacklist.json', read('blacklist.json').filter(u=>u!==req.body.user)); res.send('OK'); });
+app.post('/warn',    (req,res) =>{ const { user:U,reason }=req.body; if(U!=='GOD HIMSELF'){const w=read('warns.json'); w[U]=reason; write('warns.json',w); const l=read('log.json'); l.push(`<<SYSTEM>> Warned ${U}: ${reason}>>`); write('log.json',l);} res.send('OK'); });
+app.post('/pause',   (req,res) =>{ const s=read('status.json'); s.paused=true; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> Paused>>'); write('log.json',l); res.send('OK'); });
+app.post('/unpause', (req,res) =>{ const s=read('status.json'); s.paused=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> Unpaused>>'); write('log.json',l); res.send('OK'); });
+app.post('/off',     (req,res) =>{ const s=read('status.json'); s.off=true; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> OFF>>'); write('log.json',l); res.send('OK'); });
+app.post('/on',      (req,res) =>{ const s=read('status.json'); s.off=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> ON>>'); write('log.json',l); res.send('OK'); });
 
-app.post('/ban', (req, res) => {
-  const { user: target } = req.body;
-  if (target !== 'GOD HIMSELF') {
-    const list = read('blacklist.json');
-    if (!list.includes(target)) {
-      write('blacklist.json', [...list, target]);
-    }
-  }
-  res.send('OK');
-});
 
-app.post('/unban', (req, res) => {
-  const { user: target } = req.body;
-  write('blacklist.json', read('blacklist.json').filter(u => u !== target));
-  res.send('OK');
-});
-
-app.post('/warn', (req, res) => {
-  const { user: target, reason } = req.body;
-  if (target !== 'GOD HIMSELF') {
-    const warns = read('warns.json');
-    warns[target] = reason;
-    write('warns.json', warns);
-
-    const logArr = read('log.json');
-    logArr.push(`<<SYSTEM>> ${target} was warned: ${reason}>>`);
-    write('log.json', logArr);
-  }
-  res.send('OK');
-});
-
-app.post('/pause', (req, res) => {
-  const s = read('status.json');
-  s.paused = true; write('status.json', s);
-  const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat paused>>'); write('log.json', logArr);
-  res.send('OK');
-});
-
-app.post('/unpause', (req, res) => {
-  const s = read('status.json');
-  s.paused = false; write('status.json', s);
-  const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat unpaused>>'); write('log.json', logArr);
-  res.send('OK');
-});
-
-app.post('/off', (req, res) => {
-  const s = read('status.json');
-  s.off = true; write('status.json', s);
-  const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat OFF (only GOD HIMSELF)>>'); write('log.json', logArr);
-  res.send('OK');
-});
-
-app.post('/on', (req, res) => {
-  const s = read('status.json');
-  s.off = false; write('status.json', s);
-  const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat ON>>'); write('log.json', logArr);
-  res.send('OK');
-});
-
-// Start the server
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+// Start server
+app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
