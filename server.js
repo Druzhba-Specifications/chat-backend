@@ -1,5 +1,4 @@
 // server.js
-
 const express = require('express');
 const fs      = require('fs');
 const path    = require('path');
@@ -9,38 +8,55 @@ const dns     = require('dns');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// Serve profile‐pic assets
+// Serve uploaded avatars under /assets
 app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 
 app.use(cors());
 app.use(express.json());
 
-// Track who’s online
+// Track who’s currently online
 const onlineUsers = new Set();
 
 // Helpers to read/write JSON files
-const read  = file => JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
-const write = (file, data) => fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
+function read(file) {
+  return JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+}
+function write(file, data) {
+  fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
+}
 
-// Traffic counter
+// Traffic counter (requests per minute)
 let trafficCount = 0;
 setInterval(() => { trafficCount = 0; }, 60_000);
 app.use((req, res, next) => { trafficCount++; next(); });
 
-// ─── NEW: List all users ─────────────────────────────────────────────────────
+
+// ─── USERS ENDPOINT ────────────────────────────────────────────────────────────
+// Returns [{ username, profilePic, online, banned }, …]
 app.get('/users', (req, res) => {
-  const accounts  = read('accounts.json');
-  const blacklist = read('blacklist.json');
-  const users = Object.entries(accounts).map(([username, info]) => ({
-    username,
-    profilePic: info.profilePic || 'placeholder.png',
-    online: onlineUsers.has(username),
-    banned: blacklist.includes(username)
-  }));
+  const accounts  = read('accounts.json');    // may be string or object
+  const blacklist = read('blacklist.json');   // [username, …]
+
+  const users = Object.keys(accounts).map(username => {
+    const info = accounts[username];
+    // if info is an object with profilePic, use it; otherwise default
+    const profilePic = (typeof info === 'object' && info.profilePic)
+      ? info.profilePic
+      : 'placeholder.png';
+
+    return {
+      username,
+      profilePic,
+      online: onlineUsers.has(username),
+      banned: blacklist.includes(username)
+    };
+  });
+
   res.json(users);
 });
 
-// ─── Public Data ───────────────────────────────────────────────────────────────
+
+// ─── PUBLIC CHAT & STATS ENDPOINTS ────────────────────────────────────────────
 app.get('/status',        (req, res) => res.json(read('status.json')));
 app.get('/log',           (req, res) => res.json(read('log.json')));
 app.get('/ranks.json',    (req, res) => res.json(read('ranks.json')));
@@ -50,7 +66,6 @@ app.get('/warn/:user',    (req, res) => {
   res.send(warns[req.params.user] || '');
 });
 
-// ─── Stats APIs ────────────────────────────────────────────────────────────────
 app.get('/stats/messages', (req, res) => {
   const log    = read('log.json');
   const counts = {};
@@ -68,13 +83,13 @@ app.get('/stats/messages', (req, res) => {
   res.json(counts);
 });
 
-app.get('/stats/recent',  (req, res) => {
+app.get('/stats/recent', (req, res) => {
   const log = read('log.json');
   const last = [...log].reverse().find(l => l.includes('>>'));
   res.send(last || '');
 });
 
-app.get('/stats/ping',    (req, res) => {
+app.get('/stats/ping', (req, res) => {
   const start = Date.now();
   dns.lookup('google.com', err => {
     res.json({ ping: err ? -1 : Date.now() - start });
@@ -85,7 +100,8 @@ app.get('/stats/traffic', (req, res) => {
   res.json({ requestsPerMinute: trafficCount });
 });
 
-// ─── Auth & Chat ──────────────────────────────────────────────────────────────
+
+// ─── AUTH & MESSAGING ──────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
@@ -95,17 +111,19 @@ app.post('/login', (req, res) => {
   if (status.off && username !== 'GOD HIMSELF') {
     return res.send({ redirect: 'off.html' });
   }
-  if (!accounts[username] || accounts[username].password !== password) {
+  const userInfo = accounts[username];
+  const storedHash = typeof userInfo === 'object' ? userInfo.password : userInfo;
+  if (!storedHash || storedHash !== password) {
     return res.send({ success: false });
   }
 
   // mark online
   onlineUsers.add(username);
 
-  // record login
+  // log login
   const lastlogin = read('lastlogin.json');
   const logArr    = read('log.json');
-  logArr.push(`<<${username} Logged on! Last logged in: ${lastlogin[username] || 'Never'}>>`);
+  logArr.push(`<<${username} Logged on! Last login: ${lastlogin[username] || 'Never'}>>`);
   lastlogin[username] = new Date().toLocaleString();
   write('lastlogin.json', lastlogin);
   write('log.json', logArr);
@@ -137,23 +155,26 @@ app.post('/send', (req, res) => {
   res.send('OK');
 });
 
-// ─── Admin Commands ───────────────────────────────────────────────────────────
+
+// ─── ADMIN COMMANDS ────────────────────────────────────────────────────────────
 app.post('/clear', (req, res) => {
   write('log.json', ['<<SYSTEM>> Chat cleared by admin>>']);
   res.send('OK');
 });
 
 app.post('/ban', (req, res) => {
-  const target = req.body.user;
+  const { user: target } = req.body;
   if (target !== 'GOD HIMSELF') {
     const list = read('blacklist.json');
-    if (!list.includes(target)) write('blacklist.json', [...list, target]);
+    if (!list.includes(target)) {
+      write('blacklist.json', [...list, target]);
+    }
   }
   res.send('OK');
 });
 
 app.post('/unban', (req, res) => {
-  const target = req.body.user;
+  const { user: target } = req.body;
   write('blacklist.json', read('blacklist.json').filter(u => u !== target));
   res.send('OK');
 });
@@ -204,7 +225,7 @@ app.post('/on', (req, res) => {
   res.send('OK');
 });
 
-// ─── Start server once ─────────────────────────────────────────────────────────
+// Start the server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`Server listening on port ${PORT}`);
 });
