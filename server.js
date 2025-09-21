@@ -1,4 +1,5 @@
 // server.js
+
 const express = require('express');
 const fs      = require('fs');
 const path    = require('path');
@@ -8,47 +9,48 @@ const dns     = require('dns');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// 1) Base URL of your HTML files on GitHub Pages or raw GitHub
-//    e.g. 'https://username.github.io/repo' or
-//         'https://raw.githubusercontent.com/username/repo/main'
-const HTML_BASE = 'https://username.github.io/repo';
+// Serve profile‐pic assets
+app.use('/assets', express.static(path.join(__dirname, 'public/assets')));
 
 app.use(cors());
 app.use(express.json());
 
-// 2) Redirect root & all .html requests to your GitHub‐hosted pages
-app.get(['/', '/index.html'], (req, res) => {
-  return res.redirect(`${HTML_BASE}/index.html`);
-});
-app.get('/*.html', (req, res) => {
-  return res.redirect(`${HTML_BASE}${req.path}`);
-});
+// Track who’s online
+const onlineUsers = new Set();
 
-// 3) JSON file helpers
+// Helpers to read/write JSON files
 const read  = file => JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
 const write = (file, data) => fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
 
-// 4) In‐minute traffic counter
+// Traffic counter
 let trafficCount = 0;
 setInterval(() => { trafficCount = 0; }, 60_000);
 app.use((req, res, next) => { trafficCount++; next(); });
 
+// ─── NEW: List all users ─────────────────────────────────────────────────────
+app.get('/users', (req, res) => {
+  const accounts  = read('accounts.json');
+  const blacklist = read('blacklist.json');
+  const users = Object.entries(accounts).map(([username, info]) => ({
+    username,
+    profilePic: info.profilePic || 'placeholder.png',
+    online: onlineUsers.has(username),
+    banned: blacklist.includes(username)
+  }));
+  res.json(users);
+});
 
-// ─── PUBLIC DATA ENDPOINTS ─────────────────────────────────────────────────
+// ─── Public Data ───────────────────────────────────────────────────────────────
 app.get('/status',        (req, res) => res.json(read('status.json')));
 app.get('/log',           (req, res) => res.json(read('log.json')));
 app.get('/ranks.json',    (req, res) => res.json(read('ranks.json')));
 app.get('/blacklist.json',(req, res) => res.json(read('blacklist.json')));
-
-// Return raw warning reason or empty string
-app.get('/warn/:user', (req, res) => {
-  const target = req.params.user;      // Express auto-decodes %20 → space
-  const warns  = read('warns.json');
-  return res.send(warns[target] || '');
+app.get('/warn/:user',    (req, res) => {
+  const warns = read('warns.json');
+  res.send(warns[req.params.user] || '');
 });
 
-
-// ─── STATS ENDPOINTS ─────────────────────────────────────────────────────────────
+// ─── Stats APIs ────────────────────────────────────────────────────────────────
 app.get('/stats/messages', (req, res) => {
   const log    = read('log.json');
   const counts = {};
@@ -66,13 +68,13 @@ app.get('/stats/messages', (req, res) => {
   res.json(counts);
 });
 
-app.get('/stats/recent', (req, res) => {
+app.get('/stats/recent',  (req, res) => {
   const log = read('log.json');
   const last = [...log].reverse().find(l => l.includes('>>'));
   res.send(last || '');
 });
 
-app.get('/stats/ping', (req, res) => {
+app.get('/stats/ping',    (req, res) => {
   const start = Date.now();
   dns.lookup('google.com', err => {
     res.json({ ping: err ? -1 : Date.now() - start });
@@ -83,22 +85,24 @@ app.get('/stats/traffic', (req, res) => {
   res.json({ requestsPerMinute: trafficCount });
 });
 
-
-// ─── AUTH & CHAT ─────────────────────────────────────────────────────────────────
+// ─── Auth & Chat ──────────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
   const admins   = read('admins.json');
   const status   = read('status.json');
 
-  // OFF-mode lockout (only GOD HIMSELF)
   if (status.off && username !== 'GOD HIMSELF') {
     return res.send({ redirect: 'off.html' });
   }
-  if (accounts[username] !== password) {
+  if (!accounts[username] || accounts[username].password !== password) {
     return res.send({ success: false });
   }
 
+  // mark online
+  onlineUsers.add(username);
+
+  // record login
   const lastlogin = read('lastlogin.json');
   const logArr    = read('log.json');
   logArr.push(`<<${username} Logged on! Last logged in: ${lastlogin[username] || 'Never'}>>`);
@@ -111,6 +115,8 @@ app.post('/login', (req, res) => {
 
 app.post('/logoff', (req, res) => {
   const { username } = req.body;
+  onlineUsers.delete(username);
+
   const logArr = read('log.json');
   logArr.push(`<<${username} Logged off>>`);
   write('log.json', logArr);
@@ -131,10 +137,8 @@ app.post('/send', (req, res) => {
   res.send('OK');
 });
 
-
-// ─── ADMIN COMMANDS ───────────────────────────────────────────────────────────────
+// ─── Admin Commands ───────────────────────────────────────────────────────────
 app.post('/clear', (req, res) => {
-  // wipe log, leave single system notice
   write('log.json', ['<<SYSTEM>> Chat cleared by admin>>']);
   res.send('OK');
 });
@@ -170,45 +174,37 @@ app.post('/warn', (req, res) => {
 
 app.post('/pause', (req, res) => {
   const s = read('status.json');
-  s.paused = true;
-  write('status.json', s);
+  s.paused = true; write('status.json', s);
   const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat paused>>');
-  write('log.json', logArr);
+  logArr.push('<<SYSTEM>> Chat paused>>'); write('log.json', logArr);
   res.send('OK');
 });
 
 app.post('/unpause', (req, res) => {
   const s = read('status.json');
-  s.paused = false;
-  write('status.json', s);
+  s.paused = false; write('status.json', s);
   const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat unpaused>>');
-  write('log.json', logArr);
+  logArr.push('<<SYSTEM>> Chat unpaused>>'); write('log.json', logArr);
   res.send('OK');
 });
 
 app.post('/off', (req, res) => {
   const s = read('status.json');
-  s.off = true;
-  write('status.json', s);
+  s.off = true; write('status.json', s);
   const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat OFF (only GOD HIMSELF)>>');
-  write('log.json', logArr);
+  logArr.push('<<SYSTEM>> Chat OFF (only GOD HIMSELF)>>'); write('log.json', logArr);
   res.send('OK');
 });
 
 app.post('/on', (req, res) => {
   const s = read('status.json');
-  s.off = false;
-  write('status.json', s);
+  s.off = false; write('status.json', s);
   const logArr = read('log.json');
-  logArr.push('<<SYSTEM>> Chat ON>>');
-  write('log.json', logArr);
+  logArr.push('<<SYSTEM>> Chat ON>>'); write('log.json', logArr);
   res.send('OK');
 });
 
-// 5) Start single listener
+// ─── Start server once ─────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
