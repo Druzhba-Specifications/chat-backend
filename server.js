@@ -1,5 +1,4 @@
 // server.js
-
 const express = require('express');
 const fs      = require('fs');
 const path    = require('path');
@@ -9,36 +8,36 @@ const dns     = require('dns');
 const app  = express();
 const PORT = process.env.PORT || 3000;
 
-// 1) Serve your static files (HTML/CSS/JS) from ./public
+// 1) Serve static files from /public
 app.use(express.static(path.join(__dirname, 'public')));
 
-// 2) Middleware
+// 2) Common middleware
 app.use(cors());
 app.use(express.json());
 
-// Helpers to read/write JSON files
+// 3) Helpers to read/write your JSON DB files
 const read  = file => JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
 const write = (file, data) => fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
 
-// Traffic counter (requests per minute)
+// 4) In‐minute traffic counter
 let trafficCount = 0;
-setInterval(() => { trafficCount = 0; }, 60_000);
+setInterval(() => { trafficCount = 0 }, 60_000);
 app.use((req, res, next) => { trafficCount++; next(); });
 
 
-// ─── PUBLIC API ENDPOINTS ────────────────────────────────────────────────────────
-app.get('/status',    (req, res) => res.json(read('status.json')));
-app.get('/log',       (req, res) => res.json(read('log.json')));
-app.get('/ranks.json',(req, res) => res.json(read('ranks.json')));
+// ─── Public APIs ──────────────────────────────────────────────────────────────
+app.get('/status',       (req, res) => res.json(read('status.json')));
+app.get('/log',          (req, res) => res.json(read('log.json')));
+app.get('/ranks.json',   (req, res) => res.json(read('ranks.json')));
 app.get('/blacklist.json',(req, res) => res.json(read('blacklist.json')));
-app.get('/warn/:user',(req, res) => {
+app.get('/warn/:user',   (req, res) => {
   const warns = read('warns.json');
   res.json(warns[req.params.user] || '');
 });
 
-// ─── STATS ENDPOINTS ───────────────────────────────────────────────────────────────
+// ─── Stats APIs ────────────────────────────────────────────────────────────────
 app.get('/stats/messages', (req, res) => {
-  const log = read('log.json');
+  const log    = read('log.json');
   const counts = {};
   for (let i = 9; i >= 0; i--) {
     const d = new Date();
@@ -53,31 +52,36 @@ app.get('/stats/messages', (req, res) => {
   });
   res.json(counts);
 });
+
 app.get('/stats/recent', (req, res) => {
   const log = read('log.json');
   const last = [...log].reverse().find(l => l.includes('>>'));
   res.send(last || '');
 });
+
 app.get('/stats/ping', (req, res) => {
   const start = Date.now();
   dns.lookup('google.com', err => {
     res.json({ ping: err ? -1 : Date.now() - start });
   });
 });
+
 app.get('/stats/traffic', (req, res) => {
   res.json({ requestsPerMinute: trafficCount });
 });
 
-// ─── AUTH & CHAT ──────────────────────────────────────────────────────────────────
+// ─── Auth & Chat ──────────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
   const admins   = read('admins.json');
   const status   = read('status.json');
 
+  // OFF-mode lockout (only GOD HIMSELF can log in)
   if (status.off && username !== 'GOD HIMSELF') {
     return res.send({ redirect: 'off.html' });
   }
+
   if (accounts[username] !== password) {
     return res.send({ success: false });
   }
@@ -104,8 +108,9 @@ app.post('/send', (req, res) => {
   const { user, message } = req.body;
   const status    = read('status.json');
   const blacklist = read('blacklist.json');
+
   if (status.paused && user !== 'GOD HIMSELF') return res.send('Chat is paused');
-  if (blacklist.includes(user)) return res.send('You are banned');
+  if (blacklist.includes(user))               return res.send('You are banned');
 
   const logArr = read('log.json');
   logArr.push(`${user}>>${message}`);
@@ -113,7 +118,7 @@ app.post('/send', (req, res) => {
   res.send('OK');
 });
 
-// ─── ADMIN COMMANDS ────────────────────────────────────────────────────────────────
+// ─── Admin Commands ────────────────────────────────────────────────────────────
 app.post('/ban', (req, res) => {
   const target = req.body.user;
   if (target !== 'GOD HIMSELF') {
@@ -135,6 +140,7 @@ app.post('/warn', (req, res) => {
     const warns = read('warns.json');
     warns[target] = reason;
     write('warns.json', warns);
+
     const logArr = read('log.json');
     logArr.push(`<<SYSTEM>> ${target} was warned: ${reason}>>`);
     write('log.json', logArr);
@@ -166,14 +172,7 @@ app.post('/on', (req, res) => {
   res.send('OK');
 });
 
-// ─── LISTEN ONCE ─────────────────────────────────────────────────────────────────
+// ─── SINGLE LISTENER ──────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
-});
-
-
-
-
-app.listen(PORT, () => {
-  console.log(`Server listening at http://localhost:${PORT}/`);
 });
