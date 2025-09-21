@@ -13,12 +13,21 @@ const sanitize = str => decodeURIComponent(str).trim();
 
 app.get('/', (req, res) => res.send('✅ Chat backend is running!'));
 
+app.get('/status', (req, res) => res.json(read('status.json')));
+app.get('/log', (req, res) => res.json(read('log.json')));
+app.get('/warn/:user', (req, res) => {
+  const user = sanitize(req.params.user);
+  const warns = read('warns.json');
+  res.json(warns[user] || { reason: '', message: '' });
+});
+app.get('/blacklist.json', (req, res) => res.json(read('blacklist.json')));
+
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
   const admins = read('admins.json');
-  const blacklist = read('blacklist.json');
   const status = read('status.json');
+  const blacklist = read('blacklist.json');
 
   if (status.off && !admins.includes(username)) return res.send({ redirect: 'off.html' });
   if (accounts[username] !== password) return res.send({ success: false });
@@ -41,8 +50,6 @@ app.post('/logoff', (req, res) => {
   write('log.json', log);
   res.send('Logged off');
 });
-
-app.get('/log', (req, res) => res.json(read('log.json')));
 
 app.post('/send', (req, res) => {
   const { user, message } = req.body;
@@ -82,12 +89,6 @@ app.post('/warn', (req, res) => {
   warns[sanitize(user)] = { reason, message };
   write('warns.json', warns);
   res.send({ success: true });
-});
-
-app.get('/warn/:user', (req, res) => {
-  const user = sanitize(req.params.user);
-  const warns = read('warns.json');
-  res.json(warns[user] || { reason: '', message: '' });
 });
 
 app.post('/del', (req, res) => {
@@ -134,7 +135,5 @@ app.post('/on', (req, res) => {
   write('status.json', status);
   res.send('Turned on');
 });
-
-app.get('/status', (req, res) => res.json(read('status.json')));
 
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
