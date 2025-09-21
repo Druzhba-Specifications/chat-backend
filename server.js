@@ -12,7 +12,7 @@ const write = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 
 const sanitize = str => decodeURIComponent(str).trim();
 
 app.get('/', (req, res) => res.send('✅ Chat backend is running!'));
-
+app.get('/ranks.json', (req, res) => res.json(read('ranks.json')));
 app.get('/status', (req, res) => res.json(read('status.json')));
 app.get('/log', (req, res) => res.json(read('log.json')));
 app.get('/warn/:user', (req, res) => {
