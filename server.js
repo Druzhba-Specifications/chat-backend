@@ -7,9 +7,16 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 
+// Utility functions
 const read = file => JSON.parse(fs.readFileSync(file));
 const write = (file, data) => fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
+// Root route
+app.get('/', (req, res) => {
+  res.send('✅ Chat backend is running!');
+});
+
+// Login
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
@@ -31,6 +38,7 @@ app.post('/login', (req, res) => {
   res.send({ success: true, isAdmin: admins.includes(username) });
 });
 
+// Logoff
 app.post('/logoff', (req, res) => {
   const { username } = req.body;
   const log = read('log.json');
@@ -39,13 +47,17 @@ app.post('/logoff', (req, res) => {
   res.send('Logged off');
 });
 
+// Chat log
 app.get('/log', (req, res) => res.json(read('log.json')));
 
+// Send message
 app.post('/send', (req, res) => {
   const { user, message } = req.body;
   const blacklist = read('blacklist.json');
   const status = read('status.json');
-  if (status.paused && !read('admins.json').includes(user)) return res.send('Chat is paused');
+  const admins = read('admins.json');
+
+  if (status.paused && !admins.includes(user)) return res.send('Chat is paused');
   if (blacklist.includes(user)) return res.send('You are banned');
 
   const log = read('log.json');
@@ -54,39 +66,60 @@ app.post('/send', (req, res) => {
   res.send('Message saved');
 });
 
+// Ban user
 app.post('/ban', (req, res) => {
+  const { user } = req.body;
   const list = read('blacklist.json');
-  if (!list.includes(req.body.user)) list.push(req.body.user);
-  write('blacklist.json', list);
+  if (!list.includes(user)) {
+    list.push(user);
+    write('blacklist.json', list);
+  }
   res.send('Banned');
 });
 
+// Unban user
 app.post('/unban', (req, res) => {
-  const list = read('blacklist.json').filter(u => u !== req.body.user);
+  const { user } = req.body;
+  const list = read('blacklist.json').filter(u => u !== user);
   write('blacklist.json', list);
   res.send('Unbanned');
 });
 
+// Warn user
 app.post('/warn', (req, res) => {
-  const { reason, message } = req.body;
-  write('warn.json', { reason, message });
+  const { user, reason, message } = req.body;
+  const warns = read('warns.json');
+  warns[user] = { reason, message };
+  write('warns.json', warns);
   res.send('Warned');
 });
 
-app.get('/warn.json', (req, res) => res.json(read('warn.json')));
-
-app.post('/del', (req, res) => {
-  const log = read('log.json');
-  log.splice(req.body.line, 1);
-  write('log.json', log);
-  res.send('Deleted');
+// Get warning for user
+app.get('/warn/:user', (req, res) => {
+  const warns = read('warns.json');
+  res.json(warns[req.params.user] || { reason: '', message: '' });
 });
 
+// Delete line
+app.post('/del', (req, res) => {
+  const { line } = req.body;
+  const log = read('log.json');
+  if (line >= 0 && line < log.length) {
+    log.splice(line, 1);
+    write('log.json', log);
+    res.send('Deleted');
+  } else {
+    res.status(400).send('Invalid line number');
+  }
+});
+
+// Clear chat
 app.post('/clear', (req, res) => {
   write('log.json', []);
   res.send('Cleared');
 });
 
+// Pause chat
 app.post('/pause', (req, res) => {
   const status = read('status.json');
   status.paused = true;
@@ -94,6 +127,7 @@ app.post('/pause', (req, res) => {
   res.send('Paused');
 });
 
+// Unpause chat
 app.post('/unpause', (req, res) => {
   const status = read('status.json');
   status.paused = false;
@@ -101,6 +135,7 @@ app.post('/unpause', (req, res) => {
   res.send('Unpaused');
 });
 
+// Turn chat off
 app.post('/off', (req, res) => {
   const status = read('status.json');
   status.off = true;
@@ -108,6 +143,7 @@ app.post('/off', (req, res) => {
   res.send('Turned off');
 });
 
+// Turn chat on
 app.post('/on', (req, res) => {
   const status = read('status.json');
   status.off = false;
@@ -115,6 +151,7 @@ app.post('/on', (req, res) => {
   res.send('Turned on');
 });
 
+// Get chat status
+app.get('/status', (req, res) => res.json(read('status.json')));
+
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-
-
