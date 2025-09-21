@@ -1,7 +1,22 @@
 {
-  "GOD HIMSELF": "3be9a14504d65103606940d3929696fd",
-  "Nikky Hikky": "c2a10da4253bd80607530178e645c8b7",
-  "Admin1": "25f9e794323b453885f5181f1b624d0b",
-  "Admin2": "25f9e794323b453885f5181f1b624d0b",
-  "Gnorp Gnarp":"a8ae104615cb4e966ddb435f3e575a02"
+  "GOD HIMSELF": {
+    "password": "3be9a14504d65103606940d3929696fd",
+    "profilePic": "placeholder.png"
+  },
+  "Nikky Hikky": {
+    "password": "c2a10da4253bd80607530178e645c8b7",
+    "profilePic": "placeholder.png"
+  },
+  "Admin1": {
+    "password": "25f9e794323b453885f5181f1b624d0b",
+    "profilePic": "placeholder.png"
+  },
+  "Admin2": {
+    "password": "25f9e794323b453885f5181f1b624d0b",
+    "profilePic": "placeholder.png"
+  },
+  "Gnorp Gnarp": {
+    "password": "a8ae104615cb4e966ddb435f3e575a02",
+    "profilePic": "placeholder.png"
+  }
 }
