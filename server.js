@@ -1,171 +1,189 @@
 // server.js
-const express   = require('express');
-const http      = require('http');
-const socketIo  = require('socket.io');
-const fs        = require('fs');
-const path      = require('path');      // ← Only one declaration!
-const cors      = require('cors');
-const multer    = require('multer');
-const dns       = require('dns');
+const express  = require('express');
+const fs       = require('fs');
+const cors     = require('cors');
+const dns      = require('dns');
+const path     = require('path');        // ← for static‐serve & catch-all
+const app      = express();
+const PORT     = process.env.PORT || 3000;
 
-const upload    = multer({ dest: 'uploads/' });
-const app       = express();
-const server    = http.createServer(app);
-const io        = socketIo(server);
-const PORT      = process.env.PORT || 3000;
+app.use(cors());
+app.use(express.json());
 
-// Serve your front-end
+// ─── 1) STATIC FRONT-END ──────────────────────────────────────────────────────
+// Place your chat.html, users.html, stats.html, CSS/JS files and assets/
+// under a folder named `public/`.  Rename chat.html → public/index.html
 app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'chat.html'));
-});
 
-// JSON helpers
-function read(file) {
-  return JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
-}
-function write(file, data) {
-  fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
-}
+// ─── HELPER FUNCTIONS ─────────────────────────────────────────────────────────
+const read     = file => JSON.parse(fs.readFileSync(path.join(__dirname, file), 'utf8'));
+const write    = (file, data) => fs.writeFileSync(path.join(__dirname, file), JSON.stringify(data, null, 2));
+const sanitize = str => decodeURIComponent(str).trim();
 
-// Track traffic
+// traffic counter (requests per last minute)
 let trafficCount = 0;
-setInterval(() => trafficCount = 0, 60_000);
+setInterval(() => (trafficCount = 0), 60_000);
 app.use((req, res, next) => { trafficCount++; next(); });
 
-// WebSocket for typing indicators & online list
-const onlineUsers = new Set();
-io.on('connection', socket => {
-  const user = socket.handshake.query.user;
-  if (user) {
-    onlineUsers.add(user);
-    io.emit('online', [...onlineUsers]);
+// ─── GET ROUTES (status, log, ranks, warns, blacklist, stats) ────────────────
+// e.g.:
+app.get('/status',    (req,res) => res.json(read('status.json')));
+app.get('/log',       (req,res) => res.json(read('log.json')));
+app.get('/ranks.json',(req,res) => res.json(read('ranks.json')));
+app.get('/warns.json',(req,res) => res.json(read('warns.json')));
+app.get('/blacklist.json',(req,res)=>res.json(read('blacklist.json')));
+app.get('/stats/messages',(req,res)=>{
+  const log = read('log.json');
+  const counts = {};
+  for(let i=9;i>=0;i--){
+    const d=new Date(); d.setDate(d.getDate()-i);
+    counts[d.toISOString().slice(0,10)] = 0;
   }
-  socket.on('typing', data => socket.broadcast.emit('typing', data));
-  socket.on('disconnect', () => {
-    if (user) {
-      onlineUsers.delete(user);
-      io.emit('online', [...onlineUsers]);
+  log.forEach(l => {
+    if(!l.startsWith('<<') && l.includes('>>')){
+      const day = new Date().toISOString().slice(0,10);
+      if(counts[day]!==undefined) counts[day]++;
     }
+  });
+  res.json(counts);
+});
+app.get('/stats/traffic',(req,res)=>res.json({ requestsPerMinute: trafficCount }));
+app.get('/stats/ping',(req,res)=>{
+  const start=Date.now();
+  dns.lookup('google.com', err=>{
+    res.json({ ping: err?-1:Date.now()-start });
   });
 });
 
-// ─── AUTH: LOGIN / LOGOFF ─────────────────────────────────────────────────────
+// ─── LOGIN ───────────────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
   const accounts = read('accounts.json');
-  const admins   = read('admins.json');
   const status   = read('status.json');
 
   if (status.off && username !== 'GOD HIMSELF') {
-    return res.json({ redirect: 'off.html' });
+    return res.json({ redirect:'off.html' });
+  }
+  if (accounts[username] !== password) {
+    return res.json({ success:false });
   }
 
-  const stored = accounts[username];
-  const pass   = typeof stored === 'object' ? stored.password : stored;
-  if (!pass || pass !== password) {
-    return res.json({ success: false });
-  }
-
-  onlineUsers.add(username);
-  const logArr    = read('log.json');
+  // log login event
   const lastlogin = read('lastlogin.json');
+  const now       = new Date().toLocaleString();
+  const logArr    = read('log.json');
+  logArr.push(`<<${username} Logged on! Last logged in: ${lastlogin[username]||'Never'}>>`);
 
-  logArr.push(`<<${username} Logged on!>>`);
-  lastlogin[username] = new Date().toLocaleString();
-
+  write('lastlogin.json', { ...lastlogin, [username]: now });
   write('log.json', logArr);
-  write('lastlogin.json', lastlogin);
 
-  res.json({ success: true, isAdmin: admins.includes(username) });
+  const isAdmin = read('admins.json').includes(username);
+  res.json({ success:true, isAdmin });
 });
 
+// ─── LOGOFF ──────────────────────────────────────────────────────────────────
 app.post('/logoff', (req, res) => {
   const { username } = req.body;
-  onlineUsers.delete(username);
-
   const logArr = read('log.json');
   logArr.push(`<<${username} Logged off>>`);
   write('log.json', logArr);
-
   res.send('OK');
 });
 
-// ─── PUBLIC CHAT ───────────────────────────────────────────────────────────────
-app.get('/log',        (req, res) => res.json(read('log.json')));
-app.post('/send',      (req, res) => {
-  const { user, message, parentId } = req.body;
+// ─── SEND MESSAGE ─────────────────────────────────────────────────────────────
+app.post('/send', (req, res) => {
+  const { user, message } = req.body;
   const status    = read('status.json');
   const blacklist = read('blacklist.json');
 
-  if (status.paused && user !== 'GOD HIMSELF') return res.send('paused');
-  if (blacklist.includes(user))               return res.send('banned');
+  if (status.paused && user !== 'GOD HIMSELF') {
+    return res.send('Chat is paused');
+  }
+  if (blacklist.includes(user)) {
+    return res.send('You are banned');
+  }
 
   const logArr = read('log.json');
-  logArr.push(parentId
-    ? `${user}>>${message}>>${parentId}`
-    : `${user}>>${message}`);
+  logArr.push(`${user}>>${message}`);
   write('log.json', logArr);
+  res.send('Message saved');
+});
+
+// ─── ADMIN ACTIONS ────────────────────────────────────────────────────────────
+app.post('/ban', (req,res) => {
+  const target = sanitize(req.body.user);
+  if (target === 'GOD HIMSELF') {
+    return res.json({ success:false, message:'Cannot ban GOD HIMSELF' });
+  }
+  const list = read('blacklist.json');
+  if (!list.includes(target)) write('blacklist.json',[...list,target]);
+  res.json({ success:true });
+});
+
+app.post('/unban', (req,res) => {
+  const target = sanitize(req.body.user);
+  const list   = read('blacklist.json').filter(u=>u!==target);
+  write('blacklist.json', list);
+  res.json({ success:true });
+});
+
+app.post('/warn', (req,res) => {
+  const { user:target, reason } = req.body;
+  if (target === 'GOD HIMSELF') {
+    return res.json({ success:false, message:'Cannot warn GOD HIMSELF' });
+  }
+  const warns = read('warns.json');
+  warns[target] = reason;
+  write('warns.json', warns);
+
+  const logArr = read('log.json');
+  logArr.push(`<<SYSTEM>> ${target} was warned: ${reason}`);
+  write('log.json', logArr);
+
+  res.json({ success:true });
+});
+
+app.post('/off', (req,res) => {
+  const status = read('status.json');
+  status.off = true;
+  write('status.json', status);
+
+  const logArr = read('log.json');
+  logArr.push('<<SYSTEM>> Chat turned OFF by admin. Only GOD HIMSELF may return.');
+  write('log.json', logArr);
+
   res.send('OK');
 });
 
-// ─── EDIT & DELETE ────────────────────────────────────────────────────────────
-app.put('/edit/:id', (req, res) => {
-  const id = +req.params.id;
-  const log = read('log.json').map((line, idx) => {
-    if (idx === id) {
-      const [u, ...rest] = line.split('>>');
-      if (u.trim() === req.body.user) {
-        return `${u}>>${req.body.message}`;
-      }
-    }
-    return line;
-  });
-  write('log.json', log);
+app.post('/on', (req,res) => {
+  const status = read('status.json');
+  status.off = false;
+  write('status.json', status);
+
+  const logArr = read('log.json');
+  logArr.push('<<SYSTEM>> Chat turned ON by admin.');
+  write('log.json', logArr);
+
   res.send('OK');
 });
 
-app.delete('/delete/:id', (req, res) => {
-  const id = +req.params.id;
-  const log = read('log.json').filter((_, idx) => idx !== id);
-  write('log.json', log);
+// ─── PAUSE / UNPAUSE ──────────────────────────────────────────────────────────
+app.post('/pause', (req,res) => {
+  const st = read('status.json'); st.paused = true; write('status.json', st);
+  const logArr = read('log.json'); logArr.push('<<SYSTEM>> Chat paused>>'); write('log.json', logArr);
+  res.send('OK');
+});
+app.post('/unpause',(req,res) => {
+  const st = read('status.json'); st.paused = false; write('status.json', st);
+  const logArr = read('log.json'); logArr.push('<<SYSTEM>> Chat unpaused>>'); write('log.json', logArr);
   res.send('OK');
 });
 
-// ─── THREADS, REACTIONS, PINS, SEARCH, RECEIPTS, STATUS, ALERTS, STORIES, STATS ─
-app.get('/reactions.json',(req,res)=>res.json(read('reactions.json')));
-app.post('/react',(req,res)=>{ /* ... */ });
-app.get('/pins.json', (req,res)=>res.json(read('pins.json')));
-app.post('/pin',       (req,res)=>{ /* ... */ });
-app.get('/search',      (req,res)=>{ /* ... */ });
-app.get('/receipts.json',(req,res)=>res.json(read('receipts.json')));
-app.post('/read',       (req,res)=>{ /* ... */ });
-app.get('/userstatus.json',(req,res)=>res.json(read('userstatus.json')));
-app.post('/setstatus',  (req,res)=>{ /* ... */ });
-app.get('/alerts.json', (req,res)=>res.json(read('alerts.json')));
-app.post('/setalerts',  (req,res)=>{ /* ... */ });
-app.get('/stories.json',(req,res)=>{ /* ... */ });
-app.post('/story',upload.single('file'), (req,res)=>{ /* ... */ });
-app.get('/stats/messages',(req,res)=>{ /* ... */ });
-app.get('/stats/traffic',(req,res)=>res.json({ requestsPerMinute: trafficCount }));
-app.get('/stats/ping',   (req,res)=>{ /* ... */ });
-app.get('/stats/recent', (req,res)=>{ /* ... */ });
+// ─── CATCH-ALL: SEND INDEX.HTML FOR ANY OTHER PATH ────────────────────────────
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
 
-// ─── PRIVATE MESSAGES ─────────────────────────────────────────────────────────
-app.get('/pm/:u1/:u2',  (req,res)=>{ /* ... */ });
-app.post('/pm',         (req,res)=>{ /* ... */ });
-
-// ─── ADMIN ACTIONS ─────────────────────────────────────────────────────────────
-app.post('/clear',   (req,res)=>{ /* ... */ });
-app.post('/ban',     (req,res)=>{ /* ... */ });
-app.post('/unban',   (req,res)=>{ /* ... */ });
-app.post('/warn',    (req,res)=>{ /* ... */ });
-app.post('/pause',   (req,res)=>{ /* ... */ });
-app.post('/unpause', (req,res)=>{ /* ... */ });
-app.post('/off',     (req,res)=>{ /* ... */ });
-app.post('/on',      (req,res)=>{ /* ... */ });
-
-// Start HTTP + WS server
-server.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
+app.listen(PORT, () => {
+  console.log(`Server listening on ${PORT}`);
 });
