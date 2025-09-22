@@ -31,7 +31,13 @@ app.use(cors());
 app.use(express.json());
 app.use('/assets', express.static(path.join(__dirname, 'assets')));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+const path = require('path');
 
+app.use(express.static(path.join(__dirname, 'public')));
+
+// 2) Make GET / return your chat page
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'chat.html'));
 // track traffic
 let trafficCount = 0;
 setInterval(() => (trafficCount = 0), 60_000);
