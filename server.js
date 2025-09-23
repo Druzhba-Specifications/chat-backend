@@ -17,8 +17,40 @@ app.use(express.json());
 // Track online users
 const onlineUsers = new Set();
 
-// JSON helpers
-function read(f)  { return JSON.parse(fs.readFileSync(path.join(__dirname, f), 'utf8')); }
+// Ensure all required data files exist
+const dataFiles = [
+  'privates.json', 'accounts.json', 'blacklist.json', 'status.json', 'log.json',
+  'ranks.json', 'warns.json', 'lastlogin.json', 'admins.json', 'threads.json'
+];
+dataFiles.forEach(f => {
+  const filePath = path.join(__dirname, f);
+  if (!fs.existsSync(filePath)) {
+    let initial = [];
+    if (f === 'status.json') initial = { off: false, paused: false };
+    if (f === 'admins.json') initial = ['GOD HIMSELF'];
+    if (f === 'warns.json' || f === 'lastlogin.json' || f === 'ranks.json') initial = {};
+    fs.writeFileSync(filePath, JSON.stringify(initial, null, 2));
+  }
+});
+
+// Robust JSON helpers
+function read(f) {
+  const filePath = path.join(__dirname, f);
+  try {
+    const raw = fs.readFileSync(filePath, 'utf8');
+    if (!raw.trim()) return Array.isArray(JSON.parse('[]')) ? [] : {};
+    return JSON.parse(raw);
+  } catch (e) {
+    // If file missing or invalid, return sensible default
+    if (f.endsWith('.json')) {
+      if (f === 'status.json') return { off: false, paused: false };
+      if (f === 'admins.json') return ['GOD HIMSELF'];
+      if (f === 'warns.json' || f === 'lastlogin.json' || f === 'ranks.json') return {};
+      return [];
+    }
+    throw e;
+  }
+}
 function write(f, data) {
   fs.writeFileSync(path.join(__dirname, f), JSON.stringify(data, null, 2));
 }
@@ -27,7 +59,6 @@ function write(f, data) {
 let trafficCount = 0;
 setInterval(() => { trafficCount = 0; }, 60_000);
 app.use((req, res, next) => { trafficCount++; next(); });
-
 
 // ─── PRIVATE MESSAGES ───────────────────────────────────────────────────────────
 app.get('/pm/:user1/:user2', (req, res) => {
@@ -48,7 +79,6 @@ app.post('/pm', (req, res) => {
   res.send('OK');
 });
 
-
 // ─── USERS (for sidebar) ────────────────────────────────────────────────────────
 app.get('/users', (req, res) => {
   const accounts  = read('accounts.json');
@@ -67,7 +97,6 @@ app.get('/users', (req, res) => {
   });
   res.json(users);
 });
-
 
 // ─── PUBLIC CHAT & STATS ────────────────────────────────────────────────────────
 app.get('/status',        (req, res) => res.json(read('status.json')));
@@ -152,7 +181,6 @@ app.get('/help', (req, res) => {
   res.json(help);
 });
 
-
 // ─── AUTH & CHAT ───────────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
   const { username, password } = req.body;
@@ -203,7 +231,6 @@ app.post('/send', (req, res) => {
   res.send('OK');
 });
 
-
 // ─── ADMIN ACTIONS ─────────────────────────────────────────────────────────────
 app.post('/clear',   (req,res) =>{ write('log.json',['<<SYSTEM>> Cleared>>']); res.send('OK'); });
 app.post('/ban',     (req,res) =>{ const t=req.body.user; if(t!=='GOD HIMSELF'){const b=read('blacklist.json'); if(!b.includes(t)) write('blacklist.json',[...b,t]);} res.send('OK'); });
@@ -213,7 +240,6 @@ app.post('/pause',   (req,res) =>{ const s=read('status.json'); s.paused=true; w
 app.post('/unpause', (req,res) =>{ const s=read('status.json'); s.paused=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> Unpaused>>'); write('log.json',l); res.send('OK'); });
 app.post('/off',     (req,res) =>{ const s=read('status.json'); s.off=true; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> OFF>>'); write('log.json',l); res.send('OK'); });
 app.post('/on',      (req,res) =>{ const s=read('status.json'); s.off=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> ON>>'); write('log.json',l); res.send('OK'); });
-
 
 // ─── THREADS & REPLIES ─────────────────────────────────────────────────────────
 // threads.json: [ { id, title, creator, ts, messages: [ { id, user, text, ts, parentId } ] } ]
@@ -272,7 +298,6 @@ app.post('/threads/:id/reply', (req, res) => {
   write('threads.json', threads);
   res.json({ success: true, id: msgId });
 });
-
 
 // Start server
 app.listen(PORT, () => console.log(`Listening on port ${PORT}`));
