@@ -109,9 +109,11 @@ app.get('/status',        (req, res) => res.json(read('status.json')));
 app.get('/log',           (req, res) => res.json(read('log.json')));
 app.get('/ranks.json',    (req, res) => res.json(read('ranks.json')));
 app.get('/blacklist.json',(req, res) => res.json(read('blacklist.json')));
-app.get('/warn/:user',    (req, res) => {
-  const warns = read('warns.json');
-  res.send(warns[req.params.user] || '');
+app.get('/warn/:user?',    (req, res) => {
+  const warns = read('warns.json') || {};
+  const user = req.params.user || req.query.user;
+  if (!user) return res.send('');
+  res.send(warns[user] || '');
 });
 app.get('/stats/messages', (req,res) => {
   const log = read('log.json');
