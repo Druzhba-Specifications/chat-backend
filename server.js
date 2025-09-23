@@ -30,7 +30,6 @@ app.use((req, res, next) => { trafficCount++; next(); });
 
 
 // ─── PRIVATE MESSAGES ───────────────────────────────────────────────────────────
-// GET all PMs between user1 and user2
 app.get('/pm/:user1/:user2', (req, res) => {
   const pmLog = read('privates.json');  // [ { from, to, message, ts } … ]
   const { user1, user2 } = req.params;
@@ -41,7 +40,6 @@ app.get('/pm/:user1/:user2', (req, res) => {
   res.json(convo);
 });
 
-// POST a new private message
 app.post('/pm', (req, res) => {
   const { from, to, message } = req.body;
   const pmLog = read('privates.json');
@@ -112,7 +110,6 @@ app.get('/stats/traffic', (req,res) => {
 });
 
 // Admin-only helper endpoints
-// Access is controlled by providing ?admin=<username> which must be listed in admins.json
 app.get('/showbanned', (req, res) => {
   const admin = req.query.admin;
   const admins = read('admins.json');
@@ -216,6 +213,65 @@ app.post('/pause',   (req,res) =>{ const s=read('status.json'); s.paused=true; w
 app.post('/unpause', (req,res) =>{ const s=read('status.json'); s.paused=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> Unpaused>>'); write('log.json',l); res.send('OK'); });
 app.post('/off',     (req,res) =>{ const s=read('status.json'); s.off=true; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> OFF>>'); write('log.json',l); res.send('OK'); });
 app.post('/on',      (req,res) =>{ const s=read('status.json'); s.off=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> ON>>'); write('log.json',l); res.send('OK'); });
+
+
+// ─── THREADS & REPLIES ─────────────────────────────────────────────────────────
+// threads.json: [ { id, title, creator, ts, messages: [ { id, user, text, ts, parentId } ] } ]
+
+// GET all threads (summary)
+app.get('/threads', (req, res) => {
+  let threads = [];
+  try { threads = read('threads.json'); } catch (e) {}
+  res.json(threads.map(t => ({
+    id: t.id,
+    title: t.title,
+    creator: t.creator,
+    ts: t.ts,
+    messageCount: t.messages.length
+  })));
+});
+
+// POST new thread
+app.post('/threads', (req, res) => {
+  const { title, creator, text } = req.body;
+  let threads = [];
+  try { threads = read('threads.json'); } catch (e) {}
+  const id = Date.now().toString();
+  const thread = {
+    id,
+    title,
+    creator,
+    ts: Date.now(),
+    messages: [
+      { id: id + '-msg', user: creator, text, ts: Date.now(), parentId: null }
+    ]
+  };
+  threads.push(thread);
+  write('threads.json', threads);
+  res.json(thread);
+});
+
+// GET messages in a thread
+app.get('/threads/:id', (req, res) => {
+  let threads = [];
+  try { threads = read('threads.json'); } catch (e) {}
+  const thread = threads.find(t => t.id === req.params.id);
+  if (!thread) return res.status(404).send('Thread not found');
+  res.json(thread.messages);
+});
+
+// POST reply to a thread (or to a message in a thread)
+app.post('/threads/:id/reply', (req, res) => {
+  const { user, text, parentId } = req.body;
+  let threads = [];
+  try { threads = read('threads.json'); } catch (e) {}
+  const thread = threads.find(t => t.id === req.params.id);
+  if (!thread) return res.status(404).send('Thread not found');
+  const msgId = Date.now().toString() + '-' + Math.floor(Math.random()*1000);
+  thread.messages.push({ id: msgId, user, text, ts: Date.now(), parentId: parentId || null });
+  write('threads.json', threads);
+  res.json({ success: true, id: msgId });
+});
 
 
 // Start server
