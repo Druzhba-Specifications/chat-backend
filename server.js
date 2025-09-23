@@ -238,14 +238,77 @@ app.post('/send', (req, res) => {
 });
 
 // ─── ADMIN ACTIONS ─────────────────────────────────────────────────────────────
-app.post('/clear',   (req,res) =>{ write('log.json',['<<SYSTEM>> Cleared>>']); res.send('OK'); });
-app.post('/ban',     (req,res) =>{ const t=req.body.user; if(t!=='GOD HIMSELF'){const b=read('blacklist.json'); if(!b.includes(t)) write('blacklist.json',[...b,t]);} res.send('OK'); });
-app.post('/unban',   (req,res) =>{ write('blacklist.json', read('blacklist.json').filter(u=>u!==req.body.user)); res.send('OK'); });
-app.post('/warn',    (req,res) =>{ const { user:U,reason }=req.body; if(U!=='GOD HIMSELF'){const w=read('warns.json'); w[U]=reason; write('warns.json',w); const l=read('log.json'); l.push(`<<SYSTEM>> Warned ${U}: ${reason}>>`); write('log.json',l);} res.send('OK'); });
-app.post('/pause',   (req,res) =>{ const s=read('status.json'); s.paused=true; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> Paused>>'); write('log.json',l); res.send('OK'); });
-app.post('/unpause', (req,res) =>{ const s=read('status.json'); s.paused=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> Unpaused>>'); write('log.json',l); res.send('OK'); });
-app.post('/off',     (req,res) =>{ const s=read('status.json'); s.off=true; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> OFF>>'); write('log.json',l); res.send('OK'); });
-app.post('/on',      (req,res) =>{ const s=read('status.json'); s.off=false; write('status.json',s); const l=read('log.json'); l.push('<<SYSTEM>> ON>>'); write('log.json',l); res.send('OK'); });
+app.post('/clear', (req, res) => {
+  write('log.json', ['<<SYSTEM>> Cleared>>']);
+  res.send('OK');
+});
+
+app.post('/ban', (req, res) => {
+  const t = req.body.user;
+  if (t && t !== 'GOD HIMSELF') {
+    const b = read('blacklist.json') || [];
+    if (!b.includes(t)) write('blacklist.json', [...b, t]);
+  }
+  res.send('OK');
+});
+
+app.post('/unban', (req, res) => {
+  const u = req.body.user;
+  const b = read('blacklist.json') || [];
+  write('blacklist.json', b.filter(x => x !== u));
+  res.send('OK');
+});
+
+app.post('/warn', (req, res) => {
+  const { user: U, reason } = req.body || {};
+  if (U && U !== 'GOD HIMSELF') {
+    const w = read('warns.json') || {};
+    w[U] = reason || '';
+    write('warns.json', w);
+    const l = read('log.json') || [];
+    l.push(`<<SYSTEM>> Warned ${U}: ${reason}>>`);
+    write('log.json', l);
+  }
+  res.send('OK');
+});
+
+function appendSystemLog(entry) {
+  const l = read('log.json') || [];
+  l.push(entry);
+  write('log.json', l);
+}
+
+app.post('/pause', (req, res) => {
+  const s = read('status.json') || { paused: false, off: false };
+  s.paused = true;
+  write('status.json', s);
+  appendSystemLog('<<SYSTEM>> Paused>>');
+  res.send('OK');
+});
+
+app.post('/unpause', (req, res) => {
+  const s = read('status.json') || { paused: false, off: false };
+  s.paused = false;
+  write('status.json', s);
+  appendSystemLog('<<SYSTEM>> Unpaused>>');
+  res.send('OK');
+});
+
+app.post('/off', (req, res) => {
+  const s = read('status.json') || { paused: false, off: false };
+  s.off = true;
+  write('status.json', s);
+  appendSystemLog('<<SYSTEM>> OFF>>');
+  res.send('OK');
+});
+
+app.post('/on', (req, res) => {
+  const s = read('status.json') || { paused: false, off: false };
+  s.off = false;
+  write('status.json', s);
+  appendSystemLog('<<SYSTEM>> ON>>');
+  res.send('OK');
+});
 
 // ─── THREADS & REPLIES ─────────────────────────────────────────────────────────
 // threads.json: [ { id, title, creator, ts, messages: [ { id, user, text, ts, parentId } ] } ]
