@@ -38,7 +38,13 @@ function read(f) {
   const filePath = path.join(__dirname, f);
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
-    if (!raw.trim()) return Array.isArray(JSON.parse('[]')) ? [] : {};
+    if (!raw || !raw.trim()) {
+      // empty file -> sensible defaults
+      if (f === 'status.json') return { off: false, paused: false };
+      if (f === 'admins.json') return ['GOD HIMSELF'];
+      if (f === 'warns.json' || f === 'lastlogin.json' || f === 'ranks.json') return {};
+      return [];
+    }
     return JSON.parse(raw);
   } catch (e) {
     // If file missing or invalid, return sensible default
@@ -247,13 +253,13 @@ app.post('/on',      (req,res) =>{ const s=read('status.json'); s.off=false; wri
 // GET all threads (summary)
 app.get('/threads', (req, res) => {
   let threads = [];
-  try { threads = read('threads.json'); } catch (e) {}
+  try { threads = read('threads.json') || []; } catch (e) { threads = []; }
   res.json(threads.map(t => ({
-    id: t.id,
-    title: t.title,
-    creator: t.creator,
-    ts: t.ts,
-    messageCount: t.messages.length
+    id: t.id || null,
+    title: t.title || '',
+    creator: t.creator || '',
+    ts: t.ts || 0,
+    messageCount: Array.isArray(t.messages) ? t.messages.length : 0
   })));
 });
 
