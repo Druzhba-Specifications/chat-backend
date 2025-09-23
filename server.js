@@ -111,6 +111,50 @@ app.get('/stats/traffic', (req,res) => {
   res.json({ requestsPerMinute: trafficCount });
 });
 
+// Admin-only helper endpoints
+// Access is controlled by providing ?admin=<username> which must be listed in admins.json
+app.get('/showbanned', (req, res) => {
+  const admin = req.query.admin;
+  const admins = read('admins.json');
+  if(!admin || !admins.includes(admin)) return res.status(403).send('forbidden');
+  res.json(read('blacklist.json'));
+});
+
+app.get('/help', (req, res) => {
+  const admin = req.query.admin;
+  const admins = read('admins.json');
+  if(!admin || !admins.includes(admin)) return res.status(403).send('forbidden');
+
+  const help = {
+    "GET /pm/:user1/:user2": "Get private messages between user1 and user2",
+    "POST /pm": { body: { from: "user1", to: "user2", message: "..." } },
+    "GET /users": "List users for sidebar (username, profilePic, online, banned)",
+    "GET /status": "Get server status",
+    "GET /log": "Get chat log",
+    "GET /ranks.json": "Get ranks.json",
+    "GET /blacklist.json": "Get blacklist.json",
+    "GET /warn/:user": "Get warning text for a user (URL-encode spaces)",
+    "POST /login": { body: { username: "user1", password: "..." } },
+    "POST /logoff": { body: { username: "user1" } },
+    "POST /send": { body: { user: "user1", message: "..." } },
+    "GET /stats/messages": "Get message counts for last 10 days",
+    "GET /stats/recent": "Get most recent public message line",
+    "GET /stats/ping": "Ping google.com and return ms",
+    "GET /stats/traffic": "Requests per minute",
+    "POST /clear": "Reset chat log",
+    "POST /ban": { body: { user: "user1" } },
+    "POST /unban": { body: { user: "user1" } },
+    "POST /warn": { body: { user: "user1", reason: "No spamming" } },
+    "POST /pause": "Pause public chat",
+    "POST /unpause": "Unpause public chat",
+    "POST /off": "Turn server off",
+    "POST /on": "Turn server on",
+    "Notes": "Admin endpoints require ?admin=<username> and that username must be in admins.json"
+  };
+
+  res.json(help);
+});
+
 
 // ─── AUTH & CHAT ───────────────────────────────────────────────────────────────
 app.post('/login', (req, res) => {
